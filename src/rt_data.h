@@ -67,7 +67,8 @@
     S(atr.accel_diff, "atr.accel_diff")                                                            \
     S(atr.speed_boost, "atr.speed_boost")                                                          \
     R(atr.transition_boost, "atr.transition_boost")                                                \
-    S(booster.torque.value, "booster.torque")
+    S(booster.torque.value, "booster.torque")                                                      \
+    S(speed_limit.angle, "speed_limit.angle")
 
 #define RT_DATA_ALL_ITEMS(S, R) RT_DATA_ITEMS(S, R) RT_DATA_RUNTIME_ITEMS(S, R)
 

@@ -62,6 +62,7 @@ void motor_data_init(MotorData *m) {
     m->lv_threshold = 0.0f;
     m->hv_threshold = 0.0f;
     m->speed_constant = 0.0f;
+    m->erpm_to_speed = 0.0f;
 
     motor_data_reset(m);
 }
@@ -106,6 +107,17 @@ void motor_data_refresh_motor_config(MotorData *m, float lv_threshold, float hv_
         m->speed_constant = 1 / (1.5f * 0.5 * motor_poles * flux_linkage);
     } else {
         m->speed_constant = 1 / TORQUE_CONSTANT_COMPAT;
+    }
+
+    // The same calculation mc_get_speed() does, which can be overridden from
+    // LispBM on firmware 6.06+ (speed [m/s] = ERPM / pole pairs / 60 * pi *
+    // wheel diameter / gear ratio)
+    float wheel_diameter = VESC_IF->get_cfg_float(CFG_PARAM_si_wheel_diameter);
+    float gear_ratio = VESC_IF->get_cfg_float(CFG_PARAM_si_gear_ratio);
+    if (motor_poles > 0 && gear_ratio > 0.0f) {
+        m->erpm_to_speed = 3.6f * M_PI * wheel_diameter / (30.0f * motor_poles * gear_ratio);
+    } else {
+        m->erpm_to_speed = 0.0f;
     }
 }
 
