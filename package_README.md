@@ -15,6 +15,15 @@ Changelog highlights:
 
 For more details, read the [1.3 release post](https://pev.dev/t/refloat-version-1-3/2995).
 
+## EDPM Speed Limit
+This version has a mandatory **Speed Limit** for compliance with the French EDPM regulation (maximum design speed of 25 km/h):
+- Above the limit, the board raises its nose (pushback) to make you slow down. The pushback gets steeper with the overspeed (+1° per km/h, up to 10°).
+- It can't be disabled and can't be set above **25 km/h** (in **Refloat Cfg -> Pushback Alerts -> Speed Limit (EDPM)**), it can be set lower, down to 10 km/h.
+- The motor power is never cut. Don't lean into the pushback, lean back to slow down.
+- It relies on a correct speed calibration: Wheel Diameter, Motor Poles and Gear Ratio in **Motor Cfg -> Additional Info -> Setup**.
+
+For details and limitations, see [EDPM Speed Limit](https://github.com/averdier/refloat-edpm/blob/main/doc/edpm.md).
+
 ## Support the project
 I invest a lot of time and energy into the development and testing of Refloat. If you would like to support the development, here's [a few options to do so](https://riddimrider.one/donate/).
 

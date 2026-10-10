@@ -7,6 +7,9 @@ Refloat is a VESC Package for self-balancing skateboards. It aims to:
 
 _**If you're looking for README of the actual package, you can find it [here](package_README.md).**_
 
+## EDPM Speed Limit
+This fork adds a mandatory Speed Limit (pushback, 25 km/h maximum) for compliance with the French EDPM regulation, see [EDPM Speed Limit](doc/edpm.md).
+
 ## Contributing
 Contributions are welcome and appreciated, please refer to [Contributing](CONTRIBUTING.md).
 
