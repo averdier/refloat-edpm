@@ -38,6 +38,7 @@
 #include "pid.h"
 #include "remote.h"
 #include "reverse_stop.h"
+#include "speed_limit.h"
 #include "state.h"
 #include "time.h"
 #include "torque_tilt.h"
@@ -75,6 +76,7 @@ typedef struct {
     HapticFeedback haptic_feedback;
     AlertTracker alert_tracker;
     ReverseStop reverse_stop;
+    SpeedLimit speed_limit;
 
     Leds leds;
     LcmData lcm;

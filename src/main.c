@@ -39,6 +39,7 @@
 #include "pid.h"
 #include "remote.h"
 #include "rt_data.h"
+#include "speed_limit.h"
 #include "state.h"
 #include "time.h"
 #include "torque_tilt.h"
@@ -246,6 +247,7 @@ static void reset_runtime_vars(Data *d) {
     remote_reset(&d->remote, &d->time);
     booster_reset(&d->booster);
     reverse_stop_reset(&d->reverse_stop, d->motor.distance);
+    speed_limit_reset(&d->speed_limit);
 
     ema_reset(&d->balance_current, 0.0f);
 
@@ -271,12 +273,13 @@ static void engage(Data *d) {
 static float get_setpoint_adjustment_speed(Data *d) {
     switch (d->state.sat) {
     case (SAT_NONE):
+    // The Speed Limit pushback is applied separately, the target here is level
+    case (SAT_PB_SPEED):
         return d->float_conf.tiltback_return_speed;
     case (SAT_CENTERING):
         return d->float_conf.startup_speed;
     case (SAT_REVERSESTOP):
         return 100.0f;
-    case (SAT_PB_SPEED):
     case (SAT_PB_DUTY):
         return d->float_conf.tiltback_duty_speed;
     case (SAT_PB_HIGH_VOLTAGE):
@@ -322,6 +325,9 @@ bool can_engage(const Data *d) {
 // Fault checking order does not really matter. From a UX perspective, switch should be before
 // angle.
 static bool check_faults(Data *d) {
+    // The remote tilt actually applied, the Speed Limit can neutralize it
+    float remote_setpoint = speed_limit_apply_offset(&d->speed_limit, d->remote.setpoint.value);
+
     // Aggressive reverse stop in case the board runs off when upside down
     if (d->state.darkride) {
         if (d->motor.erpm > 1000) {
@@ -382,7 +388,7 @@ static bool check_faults(Data *d) {
             }
 
             if (d->float_conf.enable_quickstop && d->motor.abs_erpm < 200 &&
-                fabsf(d->imu.pitch) > 14 && fabsf(d->remote.setpoint.value) < 30 &&
+                fabsf(d->imu.pitch) > 14 && fabsf(remote_setpoint) < 30 &&
                 sign(d->imu.pitch) == d->motor.erpm_sign) {
                 state_stop(&d->state, STOP_QUICKSTOP);
                 return true;
@@ -445,7 +451,7 @@ static bool check_faults(Data *d) {
     }
 
     // Check pitch angle
-    if (fabsf(d->imu.pitch) > d->float_conf.fault_pitch && fabsf(d->remote.setpoint.value) < 30) {
+    if (fabsf(d->imu.pitch) > d->float_conf.fault_pitch && fabsf(remote_setpoint) < 30) {
         if (timer_older_ms(&d->time, d->fault_angle_pitch_timer, d->float_conf.fault_delay_pitch)) {
             state_stop(&d->state, STOP_PITCH);
             return true;
@@ -631,13 +637,9 @@ static void calculate_setpoint_target(Data *d) {
             d->state.sat = SAT_NONE;
             d->setpoint_target = 0;
         }
-    } else if (d->float_conf.tiltback_speed > 0.0 &&
-               fabsf(d->motor.speed) > d->float_conf.tiltback_speed) {
-        if (d->motor.speed > 0) {
-            d->setpoint_target = d->float_conf.tiltback_duty_angle;
-        } else {
-            d->setpoint_target = -d->float_conf.tiltback_duty_angle;
-        }
+    } else if (d->speed_limit.active) {
+        // The pushback itself is applied separately, see speed_limit.h
+        d->setpoint_target = 0;
         d->beep_reason = BEEP_SPEED;
         d->state.sat = SAT_PB_SPEED;
     } else {
@@ -868,7 +870,7 @@ static void refloat_thd(void *arg) {
                     &d->reverse_stop,
                     d->motor.distance,
                     d->motor.erpm,
-                    d->setpoint_target_interpolated,
+                    speed_limit_apply_pushback(&d->speed_limit, d->setpoint_target_interpolated),
                     &d->time,
                     d->float_conf.fault_reversestop_enabled
                 );
@@ -889,6 +891,10 @@ static void refloat_thd(void *arg) {
 
             d->enable_upside_down = true;
 
+            // Speed Limit (EDPM): mandatory, applied on top of the other
+            // pushbacks, see speed_limit.h
+            speed_limit_update(&d->speed_limit, &d->motor, &d->state, &d->float_conf, dt);
+
             // Calculate setpoint and interpolation
             calculate_setpoint_target(d);
             rate_limitf(
@@ -896,10 +902,11 @@ static void refloat_thd(void *arg) {
                 d->setpoint_target,
                 get_setpoint_adjustment_speed(d) * dt
             );
-            d->setpoint = d->setpoint_target_interpolated;
+            d->setpoint =
+                speed_limit_apply_pushback(&d->speed_limit, d->setpoint_target_interpolated);
 
             remote_update(&d->remote, &d->state, &d->float_conf, dt);
-            d->setpoint += d->remote.setpoint.value;
+            d->setpoint += speed_limit_apply_offset(&d->speed_limit, d->remote.setpoint.value);
 
             if (!d->state.darkride) {
                 if (!d->state.wheelslip) {
@@ -920,7 +927,8 @@ static void refloat_thd(void *arg) {
                 );
                 turn_tilt_update(&d->turn_tilt, &d->motor, &d->float_conf, d->state.wheelslip, dt);
 
-                d->setpoint += d->noseangling_interpolated;
+                d->setpoint +=
+                    speed_limit_apply_offset(&d->speed_limit, d->noseangling_interpolated);
                 d->setpoint += d->turn_tilt.setpoint.value;
 
                 // aggregated torque tilts:
@@ -1172,6 +1180,8 @@ static void read_cfg_from_eeprom(Data *d) {
         confparser_set_defaults_refloatconfig(&d->float_conf);
     }
 
+    speed_limit_sanitize_config(&d->float_conf);
+
     VESC_IF->free(buffer);
 }
 
@@ -1211,6 +1221,7 @@ static void data_init(Data *d) {
     haptic_feedback_init(&d->haptic_feedback);
     alert_tracker_init(&d->alert_tracker);
     reverse_stop_init(&d->reverse_stop);
+    speed_limit_init(&d->speed_limit);
 
     // Must run before leds_setup(): beeper_init() configures VESC_PIN_PPM as a GPIO
     // output, which on some hardware is the same pad as LED_PIN_B6. Whichever is
@@ -1706,7 +1717,7 @@ static void cmd_runtime_tune_tilt(Data *d, unsigned char *cfg, int len) {
     d->float_conf.tiltback_duty_angle = (float) cfg[3] / 10.0;
     d->float_conf.tiltback_duty_speed = (float) cfg[4] / 10.0;
     if (len >= 6) {
-        d->float_conf.tiltback_speed = (float) cfg[5];
+        d->float_conf.tiltback_speed = speed_limit_threshold(cfg[5]);
     }
 
     beep_alert(d, 3, 0);
@@ -2632,6 +2643,8 @@ static bool set_cfg(uint8_t *buffer) {
     }
 
     bool res = confparser_deserialize_refloatconfig(buffer, &d->float_conf);
+
+    speed_limit_sanitize_config(&d->float_conf);
 
     // don't allow to disable the package in the RUNNING state
     if (d->state.state == STATE_RUNNING) {
