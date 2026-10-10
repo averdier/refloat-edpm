@@ -68,6 +68,7 @@ typedef struct {
     float lv_threshold;
     float hv_threshold;
     float speed_constant;  // a.k.a. Kv, inverse of Kt, the torque constant
+    float erpm_to_speed;  // km/h per ERPM, from the wheel and motor configuration
 } MotorData;
 
 void motor_data_init(MotorData *m);
